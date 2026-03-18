@@ -150,6 +150,9 @@ async def view_session_details(query, session_id):
             
             keyboard.append([InlineKeyboardButton("⬅️ Voltar para Lista", callback_data='list_sessions')])
             await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            
+            # Iniciar monitoramento automático ao entrar nos detalhes da sessão
+            asyncio.create_task(monitor_session(query, session_id))
         else:
             await query.message.reply_text(f"❌ Erro ao buscar detalhes da sessão: {response.status_code}")
     except Exception as e:
@@ -193,7 +196,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = requests.post(f"{JULES_BASE_URL}/sessions/{session_id}:sendMessage", headers=headers, json=data, timeout=30)
             if response.status_code == 200:
                 await update.message.reply_text(f"✅ **Mensagem enviada com sucesso!**\nO Jules continuará o trabalho agora.", parse_mode='Markdown')
-                # Reiniciar monitoramento para garantir que as novas atividades sejam capturadas
                 asyncio.create_task(monitor_session(update, session_id))
             else:
                 await update.message.reply_text(f"❌ Erro ao enviar mensagem: {response.text}")
@@ -202,12 +204,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['replying_to_session'] = None
 
-async def monitor_session(update, session_id):
+async def monitor_session(update_or_query, session_id):
     """Monitora o status e as atividades detalhadas da sessão em tempo real."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     last_state = ""
     processed_activities = set()
     
+    # Determinar como enviar mensagens (Update ou CallbackQuery)
+    if hasattr(update_or_query, 'message'):
+        sender = update_or_query.message
+    else:
+        sender = update_or_query
+
     while True:
         try:
             # 1. Verificar Status da Sessão
@@ -217,19 +225,20 @@ async def monitor_session(update, session_id):
                 current_state = session['state']
                 
                 if current_state != last_state:
-                    await update.message.reply_text(f"🔔 **Status da Sessão {session_id}**: `{current_state}`", parse_mode='Markdown')
+                    await sender.reply_text(f"🔔 **Status da Sessão {session_id}**: `{current_state}`", parse_mode='Markdown')
                     last_state = current_state
                 
-                # 2. Verificar Atividades Detalhadas (Pensando, Pesquisando, etc.)
+                # 2. Verificar Atividades Detalhadas
                 activities_resp = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}/activities", headers=headers, timeout=30)
                 if activities_resp.status_code == 200:
                     activities = activities_resp.json().get('activities', [])
                     for act in activities:
                         act_id = act['name']
                         if act_id not in processed_activities:
-                            # Mapear tipos de atividade para mensagens amigáveis
                             act_type = act.get('type', 'UNKNOWN')
                             msg = ""
+                            
+                            # Mapeamento detalhado de atividades
                             if act_type == 'PLAN_GENERATION':
                                 msg = "🧠 **Jules está pensando e criando um plano...**"
                             elif act_type == 'RESEARCH':
@@ -237,13 +246,15 @@ async def monitor_session(update, session_id):
                             elif act_type == 'EDIT':
                                 msg = "✍️ **Jules está editando arquivos...**"
                             elif act_type == 'MESSAGE':
-                                # Se for uma mensagem do Jules para o usuário
+                                # Capturar mensagens do Jules
                                 content = act.get('message', {}).get('content', '')
                                 if content:
                                     msg = f"💬 **Jules respondeu:**\n\n{content}"
+                            elif act_type == 'PLAN_APPROVAL_REQUEST':
+                                msg = "📋 **Jules criou um plano e está aguardando sua aprovação.**"
                             
                             if msg:
-                                await update.message.reply_text(msg, parse_mode='Markdown')
+                                await sender.reply_text(msg, parse_mode='Markdown')
                             processed_activities.add(act_id)
 
                 if current_state in ['COMPLETED', 'FAILED']:
@@ -251,14 +262,14 @@ async def monitor_session(update, session_id):
                         for output in session['outputs']:
                             if 'pullRequest' in output:
                                 pr = output['pullRequest']
-                                await update.message.reply_text(f"🎉 **Tarefa concluída!**\nPR criado: {pr['url']}", parse_mode='Markdown')
+                                await sender.reply_text(f"🎉 **Tarefa concluída!**\nPR criado: {pr['url']}", parse_mode='Markdown')
                     break
             else:
                 break
         except Exception as e:
             logging.error(f"Erro no monitoramento: {e}")
         
-        await asyncio.sleep(10) # Verificar a cada 10 segundos para tempo real
+        await asyncio.sleep(5) # Reduzi para 5 segundos para ser mais "tempo real"
 
 if __name__ == '__main__':
     t_request = HTTPXRequest(connect_timeout=20, read_timeout=20)
