@@ -79,6 +79,8 @@ async def list_sources(query):
             keyboard.append([InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("📂 **Selecione um repositório:**", reply_markup=reply_markup, parse_mode='Markdown')
+        elif response.status_code == 401:
+            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou. Verifique em jules.google.com/settings.", parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar repositórios: {response.status_code}")
     except Exception as e:
@@ -105,6 +107,8 @@ async def list_sessions(query):
             keyboard.append([InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("🕒 **Selecione uma sessão para ver detalhes:**", reply_markup=reply_markup, parse_mode='Markdown')
+        elif response.status_code == 401:
+            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou. Verifique em jules.google.com/settings.", parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar sessões: {response.status_code}")
     except Exception as e:
@@ -129,6 +133,8 @@ async def view_session_details(query, session_id):
             keyboard = [[InlineKeyboardButton("⬅️ Voltar para Lista", callback_data='list_sessions')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        elif response.status_code == 401:
+            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou.", parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar detalhes da sessão: {response.status_code}")
     except Exception as e:
@@ -164,6 +170,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 asyncio.create_task(monitor_session(update, session_id))
+            elif response.status_code == 401:
+                await update.message.reply_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou.", parse_mode='Markdown')
             else:
                 await update.message.reply_text(f"❌ Erro ao criar sessão: {response.text}")
         except Exception as e:
@@ -194,6 +202,9 @@ async def monitor_session(update, session_id):
                                 pr = output['pullRequest']
                                 await update.message.reply_text(f"🎉 **Tarefa concluída!**\nPR criado: {pr['url']}", parse_mode='Markdown')
                     break
+            elif response.status_code == 401:
+                await update.message.reply_text("❌ **Erro 401: Monitoramento interrompido.**\nAPI Key inválida.", parse_mode='Markdown')
+                break
             else:
                 break
         except Exception as e:
