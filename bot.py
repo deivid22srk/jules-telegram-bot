@@ -3,6 +3,7 @@ import requests
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 # Configurações
 TELEGRAM_TOKEN = "8610767255:AAEDHuCOQDvTe7BEh8ddKc3ReAfACSSbCVo"
@@ -62,7 +63,7 @@ async def list_sources(query):
     """Lista os repositórios disponíveis na API Jules."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
-        response = requests.get(f"{JULES_BASE_URL}/sources", headers=headers)
+        response = requests.get(f"{JULES_BASE_URL}/sources", headers=headers, timeout=30)
         if response.status_code == 200:
             sources = response.json().get('sources', [])
             if not sources:
@@ -87,7 +88,7 @@ async def list_sessions(query):
     """Lista as sessões ativas com botões para ver detalhes."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
-        response = requests.get(f"{JULES_BASE_URL}/sessions", headers=headers)
+        response = requests.get(f"{JULES_BASE_URL}/sessions", headers=headers, timeout=30)
         if response.status_code == 200:
             sessions = response.json().get('sessions', [])
             if not sessions:
@@ -113,7 +114,7 @@ async def view_session_details(query, session_id):
     """Mostra detalhes de uma sessão específica."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
-        response = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}", headers=headers)
+        response = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}", headers=headers, timeout=30)
         if response.status_code == 200:
             s = response.json()
             text = (
@@ -153,7 +154,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data["sourceContext"] = {"source": source}
 
         try:
-            response = requests.post(f"{JULES_BASE_URL}/sessions", headers=headers, json=data)
+            response = requests.post(f"{JULES_BASE_URL}/sessions", headers=headers, json=data, timeout=30)
             if response.status_code == 200:
                 session = response.json()
                 session_id = session['id']
@@ -177,7 +178,7 @@ async def monitor_session(update, session_id):
     
     while True:
         try:
-            response = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}", headers=headers)
+            response = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}", headers=headers, timeout=30)
             if response.status_code == 200:
                 session = response.json()
                 current_state = session['state']
@@ -201,7 +202,9 @@ async def monitor_session(update, session_id):
         await asyncio.sleep(15)
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # Configuração de timeout robusta para o Telegram (útil para Termux/redes instáveis)
+    t_request = HTTPXRequest(connect_timeout=20, read_timeout=20)
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(t_request).build()
     
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CallbackQueryHandler(button_handler))
