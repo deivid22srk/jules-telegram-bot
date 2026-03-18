@@ -16,19 +16,27 @@ logging.basicConfig(
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exibe o menu principal com botões interativos."""
     keyboard = [
         [InlineKeyboardButton("📂 Listar Repositórios", callback_data='list_sources')],
         [InlineKeyboardButton("🕒 Listar Sessões Ativas", callback_data='list_sessions')],
         [InlineKeyboardButton("➕ Criar Nova Sessão", callback_data='create_session')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Olá! Eu sou o seu assistente para o Google Jules.\n"
-        "O que você gostaria de fazer hoje?",
-        reply_markup=reply_markup
+    
+    welcome_text = (
+        "🤖 **Olá! Eu sou o seu assistente para o Google Jules.**\n\n"
+        "Posso ajudar você a automatizar tarefas de codificação usando a IA do Google.\n"
+        "O que você gostaria de fazer agora?"
     )
+    
+    if update.message:
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gerencia os cliques nos botões do menu."""
     query = update.callback_query
     await query.answer()
 
@@ -37,33 +45,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'list_sessions':
         await list_sessions(query)
     elif query.data == 'create_session':
-        await query.edit_message_text("Por favor, envie a descrição da tarefa (prompt) para iniciar uma nova sessão.")
+        await query.edit_message_text("✍️ Por favor, envie a descrição da tarefa (prompt) para iniciar uma nova sessão.")
         context.user_data['awaiting_prompt'] = True
     elif query.data.startswith('sel_source_'):
         source_id = query.data.replace('sel_source_', '')
         context.user_data['selected_source'] = f"sources/{source_id}"
-        await query.edit_message_text(f"✅ Repositório selecionado: {source_id}. Agora envie o prompt da tarefa.")
+        await query.edit_message_text(f"✅ Repositório selecionado: `{source_id}`.\nAgora envie o prompt da tarefa.", parse_mode='Markdown')
         context.user_data['awaiting_prompt'] = True
     elif query.data.startswith('view_session_'):
         session_id = query.data.replace('view_session_', '')
         await view_session_details(query, session_id)
     elif query.data == 'main_menu':
-        keyboard = [
-            [InlineKeyboardButton("📂 Listar Repositórios", callback_data='list_sources')],
-            [InlineKeyboardButton("🕒 Listar Sessões Ativas", callback_data='list_sessions')],
-            [InlineKeyboardButton("➕ Criar Nova Sessão", callback_data='create_session')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Menu Principal:", reply_markup=reply_markup)
+        await start(update, context)
 
 async def list_sources(query):
+    """Lista os repositórios disponíveis na API Jules."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
         response = requests.get(f"{JULES_BASE_URL}/sources", headers=headers)
         if response.status_code == 200:
             sources = response.json().get('sources', [])
             if not sources:
-                await query.edit_message_text("Nenhum repositório encontrado.")
+                keyboard = [[InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')]]
+                await query.edit_message_text("📭 Nenhum repositório encontrado.", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
             
             keyboard = []
@@ -73,20 +77,22 @@ async def list_sources(query):
             
             keyboard.append([InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("Selecione um repositório:", reply_markup=reply_markup)
+            await query.edit_message_text("📂 **Selecione um repositório:**", reply_markup=reply_markup, parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar repositórios: {response.status_code}")
     except Exception as e:
         await query.edit_message_text(f"❌ Erro de conexão: {str(e)}")
 
 async def list_sessions(query):
+    """Lista as sessões ativas com botões para ver detalhes."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
         response = requests.get(f"{JULES_BASE_URL}/sessions", headers=headers)
         if response.status_code == 200:
             sessions = response.json().get('sessions', [])
             if not sessions:
-                await query.edit_message_text("Nenhuma sessão ativa encontrada.")
+                keyboard = [[InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')]]
+                await query.edit_message_text("📭 Nenhuma sessão ativa encontrada.", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
             
             keyboard = []
@@ -97,25 +103,26 @@ async def list_sessions(query):
             
             keyboard.append([InlineKeyboardButton("⬅️ Voltar", callback_data='main_menu')])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("Selecione uma sessão para ver detalhes:", reply_markup=reply_markup)
+            await query.edit_message_text("🕒 **Selecione uma sessão para ver detalhes:**", reply_markup=reply_markup, parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar sessões: {response.status_code}")
     except Exception as e:
         await query.edit_message_text(f"❌ Erro de conexão: {str(e)}")
 
 async def view_session_details(query, session_id):
+    """Mostra detalhes de uma sessão específica."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     try:
         response = requests.get(f"{JULES_BASE_URL}/sessions/{session_id}", headers=headers)
         if response.status_code == 200:
             s = response.json()
             text = (
-                f"🔍 **Detalhes da Sessão**\n"
-                f"🆔 ID: `{s['id']}`\n"
-                f"📌 Título: {s.get('title', 'Sem título')}\n"
-                f"⚡ Status: `{s['state']}`\n"
-                f"📝 Prompt: {s.get('prompt', 'N/A')}\n"
-                f"📅 Criada em: {s['createTime']}\n"
+                f"🔍 **Detalhes da Sessão**\n\n"
+                f"🆔 **ID:** `{s['id']}`\n"
+                f"📌 **Título:** {s.get('title', 'Sem título')}\n"
+                f"⚡ **Status:** `{s['state']}`\n"
+                f"📝 **Prompt:** {s.get('prompt', 'N/A')}\n"
+                f"📅 **Criada em:** {s['createTime']}\n"
             )
             
             keyboard = [[InlineKeyboardButton("⬅️ Voltar para Lista", callback_data='list_sessions')]]
@@ -127,11 +134,12 @@ async def view_session_details(query, session_id):
         await query.edit_message_text(f"❌ Erro de conexão: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa mensagens de texto para criar novas sessões."""
     if context.user_data.get('awaiting_prompt'):
         prompt = update.message.text
         source = context.user_data.get('selected_source')
         
-        await update.message.reply_text("🚀 Iniciando sessão no Jules... Aguarde.")
+        await update.message.reply_text("🚀 **Iniciando sessão no Jules... Aguarde.**", parse_mode='Markdown')
         
         headers = {
             "x-goog-api-key": JULES_API_KEY,
@@ -149,7 +157,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if response.status_code == 200:
                 session = response.json()
                 session_id = session['id']
-                await update.message.reply_text(f"✅ Sessão criada! ID: `{session_id}`\nStatus: `{session['state']}`\nMonitorando progresso...")
+                await update.message.reply_text(
+                    f"✅ **Sessão criada!**\nID: `{session_id}`\nStatus: `{session['state']}`\n\nMonitorando progresso...",
+                    parse_mode='Markdown'
+                )
                 
                 asyncio.create_task(monitor_session(update, session_id))
             else:
@@ -160,6 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_prompt'] = False
 
 async def monitor_session(update, session_id):
+    """Monitora o status da sessão e notifica o usuário."""
     headers = {"x-goog-api-key": JULES_API_KEY}
     last_state = ""
     
