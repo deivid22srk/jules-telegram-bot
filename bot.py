@@ -56,6 +56,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith('view_session_'):
         session_id = query.data.replace('view_session_', '')
         await view_session_details(query, session_id)
+    elif query.data.startswith('reply_session_'):
+        session_id = query.data.replace('reply_session_', '')
+        context.user_data['replying_to_session'] = session_id
+        await query.edit_message_text(f"💬 **Enviando resposta para a sessão `{session_id}`**\n\nPor favor, digite sua mensagem abaixo:", parse_mode='Markdown')
     elif query.data == 'main_menu':
         await start(update, context)
 
@@ -80,7 +84,7 @@ async def list_sources(query):
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("📂 **Selecione um repositório:**", reply_markup=reply_markup, parse_mode='Markdown')
         elif response.status_code == 401:
-            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou. Verifique em jules.google.com/settings.", parse_mode='Markdown')
+            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou.", parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar repositórios: {response.status_code}")
     except Exception as e:
@@ -108,7 +112,7 @@ async def list_sessions(query):
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("🕒 **Selecione uma sessão para ver detalhes:**", reply_markup=reply_markup, parse_mode='Markdown')
         elif response.status_code == 401:
-            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou. Verifique em jules.google.com/settings.", parse_mode='Markdown')
+            await query.edit_message_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou.", parse_mode='Markdown')
         else:
             await query.edit_message_text(f"❌ Erro ao buscar sessões: {response.status_code}")
     except Exception as e:
@@ -130,7 +134,12 @@ async def view_session_details(query, session_id):
                 f"📅 **Criada em:** {s['createTime']}\n"
             )
             
-            keyboard = [[InlineKeyboardButton("⬅️ Voltar para Lista", callback_data='list_sessions')]]
+            keyboard = []
+            # Se a sessão estiver esperando feedback, mostrar botão de resposta
+            if s['state'] in ['AWAITING_USER_FEEDBACK', 'AWAITING_PLAN_APPROVAL', 'IN_PROGRESS']:
+                keyboard.append([InlineKeyboardButton("💬 Responder ao Jules", callback_data=f"reply_session_{s['id']}")])
+            
+            keyboard.append([InlineKeyboardButton("⬅️ Voltar para Lista", callback_data='list_sessions')])
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
         elif response.status_code == 401:
@@ -141,21 +150,16 @@ async def view_session_details(query, session_id):
         await query.edit_message_text(f"❌ Erro de conexão: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processa mensagens de texto para criar novas sessões."""
+    """Processa mensagens de texto para criar novas sessões ou responder a sessões existentes."""
+    # Caso 1: Criando nova sessão
     if context.user_data.get('awaiting_prompt'):
         prompt = update.message.text
         source = context.user_data.get('selected_source')
         
         await update.message.reply_text("🚀 **Iniciando sessão no Jules... Aguarde.**", parse_mode='Markdown')
         
-        headers = {
-            "x-goog-api-key": JULES_API_KEY,
-            "Content-Type": "application/json"
-        }
-        data = {
-            "prompt": prompt,
-            "requirePlanApproval": False
-        }
+        headers = {"x-goog-api-key": JULES_API_KEY, "Content-Type": "application/json"}
+        data = {"prompt": prompt, "requirePlanApproval": False}
         if source:
             data["sourceContext"] = {"source": source}
 
@@ -164,20 +168,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if response.status_code == 200:
                 session = response.json()
                 session_id = session['id']
-                await update.message.reply_text(
-                    f"✅ **Sessão criada!**\nID: `{session_id}`\nStatus: `{session['state']}`\n\nMonitorando progresso...",
-                    parse_mode='Markdown'
-                )
-                
+                await update.message.reply_text(f"✅ **Sessão criada!**\nID: `{session_id}`\nStatus: `{session['state']}`\n\nMonitorando progresso...", parse_mode='Markdown')
                 asyncio.create_task(monitor_session(update, session_id))
-            elif response.status_code == 401:
-                await update.message.reply_text("❌ **Erro 401: Não Autorizado.**\nSua API Key do Jules parece ser inválida ou expirou.", parse_mode='Markdown')
             else:
                 await update.message.reply_text(f"❌ Erro ao criar sessão: {response.text}")
         except Exception as e:
             await update.message.reply_text(f"❌ Erro: {str(e)}")
         
         context.user_data['awaiting_prompt'] = False
+
+    # Caso 2: Respondendo a uma sessão existente
+    elif context.user_data.get('replying_to_session'):
+        session_id = context.user_data.get('replying_to_session')
+        message_text = update.message.text
+        
+        await update.message.reply_text(f"📤 **Enviando sua mensagem para a sessão `{session_id}`...**", parse_mode='Markdown')
+        
+        headers = {"x-goog-api-key": JULES_API_KEY, "Content-Type": "application/json"}
+        data = {"prompt": message_text}
+
+        try:
+            # Endpoint para enviar mensagem para a sessão
+            response = requests.post(f"{JULES_BASE_URL}/sessions/{session_id}:sendMessage", headers=headers, json=data, timeout=30)
+            if response.status_code == 200:
+                await update.message.reply_text(f"✅ **Mensagem enviada com sucesso!**\nO Jules continuará o trabalho agora.", parse_mode='Markdown')
+            else:
+                await update.message.reply_text(f"❌ Erro ao enviar mensagem: {response.text}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Erro: {str(e)}")
+        
+        context.user_data['replying_to_session'] = None
 
 async def monitor_session(update, session_id):
     """Monitora o status da sessão e notifica o usuário."""
@@ -202,9 +222,6 @@ async def monitor_session(update, session_id):
                                 pr = output['pullRequest']
                                 await update.message.reply_text(f"🎉 **Tarefa concluída!**\nPR criado: {pr['url']}", parse_mode='Markdown')
                     break
-            elif response.status_code == 401:
-                await update.message.reply_text("❌ **Erro 401: Monitoramento interrompido.**\nAPI Key inválida.", parse_mode='Markdown')
-                break
             else:
                 break
         except Exception as e:
@@ -213,7 +230,6 @@ async def monitor_session(update, session_id):
         await asyncio.sleep(15)
 
 if __name__ == '__main__':
-    # Configuração de timeout robusta para o Telegram (útil para Termux/redes instáveis)
     t_request = HTTPXRequest(connect_timeout=20, read_timeout=20)
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(t_request).build()
     
